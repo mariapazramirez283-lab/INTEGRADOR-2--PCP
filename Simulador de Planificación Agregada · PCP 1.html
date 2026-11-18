@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Simulador de Planificación Agregada · PCP 1</title>
+<script src="https://cdn.tailwindcss.com/3.4.17"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+:root{--bg:#f3f5f9;--card:#fff;--tx:#1c2433;--mut:#667085;--bd:#e3e7ee;--ac:#1f5fbf;--acs:#e8f0fc;--hd:#f7f8fb;--ok:#0e7a4f;--bad:#b42318;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;--bg:#0f1420;--card:#171e2e;--tx:#e6eaf2;--mut:#9aa4b8;--bd:#283148;--ac:#6aa0ff;--acs:#1d2b4a;--hd:#1b2438;--ok:#4cc38a;--bad:#ff7b6e}}
+:root[data-theme="dark"]{color-scheme:dark;--bg:#0f1420;--card:#171e2e;--tx:#e6eaf2;--mut:#9aa4b8;--bd:#283148;--ac:#6aa0ff;--acs:#1d2b4a;--hd:#1b2438;--ok:#4cc38a;--bad:#ff7b6e}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{background:var(--bg);color:var(--tx);font-family:"IBM Plex Sans","Segoe UI",system-ui,sans-serif;margin:0}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:16px}
+.mut{color:var(--mut)}.num{text-align:right;font-variant-numeric:tabular-nums}
+.kpi b{font-size:1.5rem;display:block;margin-top:4px;font-variant-numeric:tabular-nums}
+.tab{padding:10px 14px;border-bottom:2px solid transparent;color:var(--mut);font-weight:500;white-space:nowrap;cursor:pointer;background:none;border-top:0;border-left:0;border-right:0}
+.tab.on{color:var(--ac);border-bottom-color:var(--ac)}
+.tw{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:.85rem}
+th{background:var(--hd);text-align:right;padding:8px 10px;white-space:nowrap;border-bottom:1px solid var(--bd)}th:first-child,td:first-child{text-align:left}
+td{padding:7px 10px;border-bottom:1px solid var(--bd);text-align:right;font-variant-numeric:tabular-nums}
+tr.tot td{font-weight:700;background:var(--hd)}
+.btn{background:var(--ac);color:#fff;border:0;border-radius:8px;padding:8px 14px;font-weight:600;cursor:pointer}
+.btn.s{background:var(--acs);color:var(--ac)}
+input[type=number],select{background:var(--card);color:var(--tx);border:1px solid var(--bd);border-radius:6px;padding:4px 6px;width:84px;text-align:right}
+select{width:auto;text-align:left}input[type=range]{width:100%;accent-color:var(--ac)}
+.cw{position:relative;height:290px}.pane{display:none}.pane.on{display:block}
+.warn{background:#fdecea;color:#b42318;border-radius:8px;padding:10px;margin-bottom:12px;display:none}
+</style></head>
+<body>
+<div class="max-w-6xl mx-auto p-4">
+<header class="flex flex-wrap items-center justify-between gap-2 mb-4">
+<div><h1 class="text-xl font-bold">Simulador y optimizador de planificación agregada</h1>
+<div class="mut text-sm">FI-UNaM · Ingeniería Industrial · PCP 1 · Integrador N°2 · MILP en vivo (12 meses)</div></div>
+<span id="st" class="mut text-sm"></span></header>
+<div id="warn" class="warn"></div>
+<div id="esc" class="card mb-3" style="display:none;background:var(--acs)"></div>
+<section class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4" id="kpis"></section>
+<nav class="flex overflow-x-auto mb-3" style="border-bottom:1px solid var(--bd)">
+<button class="tab on" data-t="0">Tablero ejecutivo</button><button class="tab" data-t="1">Planilla agregada</button>
+<button class="tab" data-t="2">Simulador “qué pasa si…”</button><button class="tab" data-t="3">Supuestos y consideraciones</button></nav>
+
+<div class="pane on" id="p0"><div class="grid lg:grid-cols-2 gap-3">
+<div class="card"><h3 class="font-semibold mb-2">Demanda vs. producción (unidades)</h3><div class="cw"><canvas id="c1"></canvas></div></div>
+<div class="card"><h3 class="font-semibold mb-2">Evolución de operarios y movimientos</h3><div class="cw"><canvas id="c2"></canvas></div></div>
+<div class="card"><h3 class="font-semibold mb-2">Composición del costo incremental</h3><div class="cw"><canvas id="c3"></canvas></div></div>
+<div class="card"><h3 class="font-semibold mb-2">Stock y pedidos en retraso (unidades)</h3><div class="cw"><canvas id="c4"></canvas></div></div></div></div>
+
+<div class="pane" id="p1"><div class="card"><div class="flex justify-between items-center mb-3"><h3 class="font-semibold">Planilla agregada mes a mes</h3><button class="btn" id="csv">Exportar a CSV</button></div>
+<div class="tw"><table id="tbl"></table></div><div class="mut text-xs mt-2">Costo = mano de obra (horas disponibles × tarifa de hora ociosa + horas usadas × diferencial) + HE + subcontratación + contrataciones + despidos + posesión del stock que supere al de seguridad + retraso.</div></div></div>
+
+<div class="pane" id="p2"><div class="card"><div class="flex flex-wrap justify-between items-center gap-2 mb-3"><h3 class="font-semibold">Parámetros editables (el plan óptimo se recalcula al instante)</h3><button class="btn s" id="rst">Restaurar valores de la Guía</button></div>
+<div class="grid md:grid-cols-2 gap-x-8 gap-y-2" id="sim"></div></div>
+<div class="card mt-3"><h3 class="font-semibold mb-1" id="cmpT"></h3><div class="mut text-sm mb-2" id="cmpS"></div><div class="tw"><table id="cmp"></table></div></div></div>
+
+<div class="pane" id="p3"><div class="card"><h3 class="font-semibold mb-3">Supuestos del modelo y fundamento teórico</h3><div class="tw"><table id="sup"></table></div></div></div>
+<footer class="mut text-xs mt-4">Costos en unidades monetarias. Los materiales (100/u.) y el stock de seguridad (que no tiene costo de posesión) son iguales en todas las alternativas y no se incluyen.</footer>
+</div>
+<script>
+const MES=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+const PRON=[6255,5932,6408,6298,7491,7903,7811,7872,9114,10111,9914,10184];
+const DIAS=[20,20,22,20,21,20,21,21,22,22,22,20];
+const DEF={cstd:4,coc:4,che:6,csub:7,ccon:5000,cdes:8000,cstock:6,cret:25,pctHE:10,ss:250,ssFin:-1,porTurno:60,wmin:100,w0:180,hu:2.3,hj:8,demEne:6900,modo:0,wfix:130,cob:0};
+let P={...DEF},R=null,charts={};
+const SPEC=[["Costos [u.m.]",[["cstd","Hora estándar de MO",0,20,.5],["coc","Hora ociosa de MO",0,20,.5],["che","Hora extra de MO",0,30,.5],["csub","Subcontratación (incremental/unidad)",0,40,.5],["ccon","Contratación de un trabajador",0,20000,100],["cdes","Despido de un eventual",0,30000,100],["cstock","Posesión en stock (u./mes)",0,30,.5],["cret","Servicio con retraso (u./mes)",0,100,1]]],
+["Límites y capacidad",[["pctHE","Horas extra máx. (% de jornada)",0,50,1],["ss","Stock de seguridad (u.)",0,2000,10],["porTurno","Operarios simultáneos por turno (× 3 turnos)",10,100,1],["wmin","Operarios permanentes (no se despiden)",0,180,1],["w0","Dotación inicial (fin de dic.)",0,300,1],["hu","Horas estándar por unidad",1,4,.1],["hj","Horas por jornada",6,10,.5]]]];
+const f0=n=>(Math.round(n)).toLocaleString("es-AR"),f1=n=>n.toLocaleString("es-AR",{minimumFractionDigits:1,maximumFractionDigits:1}),$=n=>"$ "+f0(n);
+
+function lp(n,c,rows){
+ const m=rows.length;let ns=0,na=0;
+ const rr=rows.map(r=>{let t=r.t,b=r.b,s=1;if(b<0){s=-1;b=-b;t=t=="<="?">=":t==">="?"<=":"="}return{a:r.a,s,t,b}});
+ rr.forEach(r=>{if(r.t!="=")ns++;if(r.t!="<=")na++});
+ const N=n+ns+na,T=[],basis=[];let si=n,ai=n+ns;
+ rr.forEach(r=>{const row=new Float64Array(N+1);for(const j in r.a)row[j]=r.s*r.a[j];row[N]=r.b;
+  if(r.t=="<="){row[si]=1;basis.push(si);si++}else if(r.t==">="){row[si]=-1;si++;row[ai]=1;basis.push(ai);ai++}else{row[ai]=1;basis.push(ai);ai++}
+  T.push(row)});
+ const run=(cost,lim)=>{
+  const z=new Float64Array(N+1);for(let j=0;j<N;j++)z[j]=cost[j];
+  for(let i=0;i<m;i++){const cb=cost[basis[i]];if(cb)for(let j=0;j<=N;j++)z[j]-=cb*T[i][j]}
+  for(let it=0;it<6000;it++){
+   let e=-1,best=-1e-9;
+   for(let j=0;j<lim;j++){if(z[j]<best){best=z[j];e=j;if(it>400)break}}
+   if(e<0)return true;
+   let l=-1,bt=Infinity;
+   for(let i=0;i<m;i++){const a=T[i][e];if(a>1e-9){const t=T[i][N]/a;if(t<bt-1e-12){bt=t;l=i}}}
+   if(l<0)return false;
+   const p=T[l],pv=p[e];for(let j=0;j<=N;j++)p[j]/=pv;
+   for(let i=0;i<m;i++)if(i!=l){const f=T[i][e];if(f)for(let j=0;j<=N;j++)T[i][j]-=f*p[j]}
+   const f=z[e];for(let j=0;j<=N;j++)z[j]-=f*p[j];basis[l]=e}
+  return true};
+ const c1=new Float64Array(N);for(let j=n+ns;j<N;j++)c1[j]=1;
+ if(na){run(c1,N);let inf=0;for(let i=0;i<m;i++)if(basis[i]>=n+ns)inf+=T[i][N];if(inf>1e-6)return null;
+  for(let i=0;i<m;i++)if(basis[i]>=n+ns){for(let j=0;j<n+ns;j++)if(Math.abs(T[i][j])>1e-7){const p=T[i],pv=p[j];for(let k=0;k<=N;k++)p[k]/=pv;
+   for(let q=0;q<m;q++)if(q!=i){const f=T[q][j];if(f)for(let k=0;k<=N;k++)T[q][k]-=f*p[k]}basis[i]=j;break}}}
+ const c2=new Float64Array(N);for(let j=0;j<n;j++)c2[j]=c[j];
+ if(!run(c2,n+ns))return null;
+ const x=new Float64Array(n);for(let i=0;i<m;i++)if(basis[i]<n)x[basis[i]]=T[i][N];
+ let obj=0;for(let j=0;j<n;j++)obj+=c[j]*x[j];return{x,obj}}
+function milp(M){
+ const names=Object.keys(M.variables),ix={};names.forEach((v,i)=>ix[v]=i);const n=names.length;
+ const c=names.map(v=>M.variables[v].cost||0),co={};
+ names.forEach((v,i)=>{for(const k in M.variables[v])if(k!="cost"){(co[k]=co[k]||{})[i]=M.variables[v][k]}});
+ const base=[];for(const k in M.constraints){const q=M.constraints[k],a=co[k]||{};
+  if(q.equal!==undefined)base.push({a,t:"=",b:q.equal});if(q.min!==undefined)base.push({a,t:">=",b:q.min});if(q.max!==undefined)base.push({a,t:"<=",b:q.max})}
+ const iv=Object.keys(M.ints).map(v=>ix[v]);
+ const root=lp(n,c,base);if(!root)return{feasible:false};
+ let best=null,nodes=0;const dead=Date.now()+(M.timeout||3000);
+ const rd=lp(n,c,base.concat(iv.map(j=>({a:{[j]:1},t:"=",b:Math.round(root.x[j])}))));if(rd)best=rd;
+ const bb=(ex,s)=>{if(nodes++>150||Date.now()>dead)return;if(!s)return;if(best&&s.obj>=best.obj-1e-6)return;
+  let j=-1,mf=1e-6;iv.forEach(k=>{const f=Math.abs(s.x[k]-Math.round(s.x[k]));if(f>mf){mf=f;j=k}});
+  if(j<0){best=s;return}
+  const v=s.x[j],fl=Math.floor(v),opts=[[{a:{[j]:1},t:"<=",b:fl}],[{a:{[j]:1},t:">=",b:fl+1}]];if(v-fl>.5)opts.reverse();
+  opts.forEach(o=>{const e=ex.concat(o);bb(e,lp(n,c,base.concat(e)))})};
+ bb([],root);
+ if(!best)return{feasible:false};
+ const r={feasible:true};names.forEach((v,i)=>r[v]=best.x[i]);return r}
+function solve(P){
+ const D=PRON.slice();D[0]=P.demEne;const SS=t=>t==12&&P.ssFin>=0?P.ssFin:P.ss;
+ const V={},C={},add=(v,k,c)=>{(V[v]=V[v]||{})[k]=c};
+ let wmax=3*P.porTurno,wmin=Math.min(P.wmin,wmax);const ints={},pHE=P.cob==2?0:P.pctHE;
+ if(P.modo==1){const n=Math.max(wmin,Math.min(wmax,Math.round(P.wfix)));wmin=wmax=n}
+ for(let t=1;t<=12;t++){const d=DIAS[t-1],hd=P.hj*d;
+  add("W"+t,"cost",P.coc*hd);add("Pr"+t,"cost",(P.cstd-P.coc)*P.hu);add("Pe"+t,"cost",P.hu*P.che);
+  add("Ps"+t,"cost",P.hu*P.cstd+P.csub);add("H"+t,"cost",P.ccon);add("F"+t,"cost",P.cdes);add("I"+t,"cost",P.cstock);add("B"+t,"cost",P.cret);
+  ints["W"+t]=1;if(P.cob==1){C["ps"+t]={max:0};add("Ps"+t,"ps"+t,1)}
+  C["pl"+t]={equal:t==1?P.w0:0};add("W"+t,"pl"+t,1);add("H"+t,"pl"+t,-1);add("F"+t,"pl"+t,1);if(t>1)add("W"+(t-1),"pl"+t,-1);
+  C["rg"+t]={min:wmin,max:wmax};add("W"+t,"rg"+t,1);
+  C["cr"+t]={max:0};add("Pr"+t,"cr"+t,P.hu);add("W"+t,"cr"+t,-hd);
+  C["he"+t]={max:0};add("Pe"+t,"he"+t,P.hu);add("W"+t,"he"+t,-pHE/100*hd);
+  C["ba"+t]={equal:-D[t-1]};add("I"+t,"ba"+t,1);add("B"+t,"ba"+t,-1);["Pr","Pe","Ps"].forEach(x=>add(x+t,"ba"+t,-1));
+  if(t>1){add("I"+(t-1),"ba"+t,-1);add("B"+(t-1),"ba"+t,1)}
+  C["ss"+t]={min:SS(t)};add("I"+t,"ss"+t,1);}
+ C.b12={equal:0};add("B12","b12",1);
+ const r=milp({constraints:C,variables:V,ints,timeout:3000});
+ if(!r.feasible)return null;
+ const g=k=>r[k]||0,rows=[],tot={"Mano de obra":0,"Horas extra":0,"Subcontratación":0,"Contrataciones":0,"Despidos":0,"Posesión del stock":0,"Retraso":0};
+ for(let t=1;t<=12;t++){const hd=P.hj*DIAS[t-1],w=Math.round(g("W"+t)),h=g("H"+t),fi=g("F"+t),pr=g("Pr"+t),pe=g("Pe"+t),ps=g("Ps"+t),inv=g("I"+t),ret=g("B"+t);
+  const c={"Mano de obra":P.cstd*P.hu*pr+P.coc*(hd*w-P.hu*pr),"Horas extra":P.hu*P.che*pe,"Subcontratación":(P.hu*P.cstd+P.csub)*ps,"Contrataciones":P.ccon*h,"Despidos":P.cdes*fi,"Posesión del stock":P.cstock*(inv-SS(t)),"Retraso":P.cret*ret};
+  let s=0;for(const k in c){tot[k]+=c[k];s+=c[k]}
+  rows.push({m:MES[t-1],d:DIAS[t-1],dem:D[t-1],w,h,f:fi,pr,pe,ps,inv,ret,oc:hd*w-P.hu*pr,he:P.hu*pe,cost:s});}
+ const Z=Object.values(tot).reduce((a,b)=>a+b,0),sd=D.reduce((a,b)=>a+b,0);
+ return{rows,tot,Z,avgW:rows.reduce((a,r)=>a+r.w,0)/12,endW:rows[11].w,HE:rows.reduce((a,r)=>a+r.he,0),
+  svc:100*(1-rows.reduce((a,r)=>a+r.ret,0)/sd)};
+}
+
+function kpis(){const k=[["Costo total incremental",$(R.Z)],["Dotación (inicial / prom. / final)",`${f0(P.w0)} / ${f0(R.avgW)} / ${f0(R.endW)}`],["Horas extra totales",f0(R.HE)+" h","Subcontratación: "+f0(R.rows.reduce((a,r)=>a+r.ps,0))+" u."],["Nivel de servicio",f1(R.svc)+" %"]];
+ document.getElementById("kpis").innerHTML=k.map(x=>`<div class="card kpi"><span class="mut text-sm">${x[0]}</span><b>${x[1]}</b>${x[2]?`<span class="mut text-xs">${x[2]}</span>`:""}</div>`).join("")}
+
+function table(){const cols=[["Mes","m"],["Días","d"],["Demanda","dem"],["Plantilla","w"],["Contr.","h"],["Desp.","f"],["Prod. normal","pr"],["Prod. HE","pe"],["Subcontr.","ps"],["Stock","inv"],["Retraso","ret"],["Hs ociosas","oc"],["Costo del mes","cost"]];
+ const fm=(k,v)=>k=="m"?v:k=="cost"?$(v):f0(v);
+ let h="<tr>"+cols.map(c=>`<th>${c[0]}</th>`).join("")+"</tr>";
+ R.rows.forEach(r=>h+="<tr>"+cols.map(c=>`<td>${fm(c[1],r[c[1]])}</td>`).join("")+"</tr>");
+ const s=k=>R.rows.reduce((a,r)=>a+r[k],0);
+ h+=`<tr class="tot"><td>Total</td><td>${f0(s("d"))}</td><td>${f0(s("dem"))}</td><td>${f0(R.avgW)} (prom.)</td><td>${f0(s("h"))}</td><td>${f0(s("f"))}</td><td>${f0(s("pr"))}</td><td>${f0(s("pe"))}</td><td>${f0(s("ps"))}</td><td>${f0(R.rows[11].inv)} (final)</td><td>${f0(s("ret"))}</td><td>${f0(s("oc"))}</td><td>${$(R.Z)}</td></tr>`;
+ document.getElementById("tbl").innerHTML=h}
+
+function csv(){const H=["Mes","Dias","Demanda","Plantilla","Contrataciones","Despidos","Prod_normal","Prod_HE","Subcontratacion","Stock","Retraso","Hs_ociosas","Costo"];
+ const L=[H.join(";")].concat(R.rows.map(r=>[r.m,r.d,r.dem,r.w,r.h,r.f,r.pr,r.pe,r.ps,r.inv,r.ret,r.oc,r.cost].map(x=>typeof x=="number"?x.toFixed(2).replace(".",","):x).join(";")));
+ L.push(["Costo total","","","","","","","","","","","",R.Z.toFixed(2).replace(".",",")].join(";"));
+ const txt="\ufeff"+L.join("\n");let msg="CSV descargado";
+ try{const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([txt],{type:"text/csv"}));a.download="plan_agregado.csv";a.click()}catch(e){}
+ try{navigator.clipboard.writeText(L.join("\n"));msg+=" y copiado al portapapeles (pegar en Excel)"}catch(e){}
+ const s=document.getElementById("st");s.textContent=msg;setTimeout(()=>s.textContent="",4000)}
+
+const COL=["#1f5fbf","#e08a1e","#c2412d","#2e9e6b","#7a5bc7","#0f8fa8","#8a94a6"];
+function charts_(){const L=MES,r=R.rows,mk=(id,cfg)=>{if(charts[id]){charts[id].data=cfg.data;charts[id].update()}else charts[id]=new Chart(document.getElementById(id),cfg)};
+ const opt={responsive:true,maintainAspectRatio:false,plugins:{legend:{position:"bottom"}}};
+ mk("c1",{data:{labels:L,datasets:[{type:"bar",label:"Normal",data:r.map(x=>x.pr),backgroundColor:COL[0],stack:"a"},{type:"bar",label:"Horas extra",data:r.map(x=>x.pe),backgroundColor:COL[1],stack:"a"},{type:"bar",label:"Subcontratación",data:r.map(x=>x.ps),backgroundColor:COL[2],stack:"a"},{type:"line",label:"Demanda",data:r.map(x=>x.dem),borderColor:COL[3],backgroundColor:COL[3],tension:.2}]},options:{...opt,scales:{x:{stacked:true},y:{stacked:true}}}});
+ mk("c2",{data:{labels:L,datasets:[{type:"line",label:"Operarios",data:r.map(x=>x.w),borderColor:COL[0],backgroundColor:COL[0],yAxisID:"y",stepped:true},{type:"bar",label:"Contrataciones",data:r.map(x=>x.h),backgroundColor:COL[3],yAxisID:"y1"},{type:"bar",label:"Despidos",data:r.map(x=>-x.f),backgroundColor:COL[2],yAxisID:"y1"}]},options:{...opt,scales:{y:{position:"left"},y1:{position:"right",grid:{drawOnChartArea:false}}}}});
+ const k=Object.keys(R.tot);mk("c3",{type:"doughnut",data:{labels:k,datasets:[{data:k.map(x=>Math.round(R.tot[x])),backgroundColor:COL}]},options:opt});
+ mk("c4",{data:{labels:L,datasets:[{type:"line",label:"Stock final",data:r.map(x=>x.inv),borderColor:COL[0],backgroundColor:COL[0]},{type:"bar",label:"Retraso",data:r.map(x=>x.ret),backgroundColor:COL[2]}]},options:opt})}
+
+function run(){R=solve(P);const w=document.getElementById("warn");
+ if(!R){w.style.display="block";w.textContent="Sin solución factible con estos parámetros: revisá que el piso de operarios no supere el techo (turnos × operarios por turno).";return}
+ w.style.display="none";kpis();table();charts_();cmp();esc()}
+let tm;const sched=()=>{clearTimeout(tm);tm=setTimeout(run,120)};
+
+const COB=["óptima (horas extra + subcontratación)","solo horas extra","solo subcontratación"];
+function aplicar(m,c){P.modo=m;P.cob=c;sync();run()}
+function esc(){const e=document.getElementById("esc");
+ if(P.modo==1||P.cob!=0){e.style.display="block";e.innerHTML=`<div class="flex flex-wrap items-center justify-between gap-2"><span><b>Escenario activo:</b> ${P.modo==1?"plantilla constante de "+f0(Math.max(Math.min(P.wmin,3*P.porTurno),Math.min(3*P.porTurno,Math.round(P.wfix))))+" operarios":"plantilla óptima libre"}, cobertura ${COB[P.cob]}. Los indicadores, gráficos y la planilla corresponden a este escenario.</span><button class="btn s" onclick="aplicar(0,0)">Volver al óptimo</button></div>`}else e.style.display="none"}
+function cmp(){const L=[["Óptimo libre (referencia)",{modo:0,cob:0}],["Constante: horas extra + subcontratación óptimas",{modo:1,cob:0}],["Constante: solo horas extra",{modo:1,cob:1}],["Constante: solo subcontratación",{modo:1,cob:2}]];
+ const res=L.map(([n,o])=>({n,o,r:solve({...P,...o})})),ok=res.slice(1).filter(x=>x.r),mn=ok.length?Math.min(...ok.map(x=>x.r.Z)):0,ref=res[0].r;
+ document.getElementById("cmpS").dataset.t=1;document.getElementById("cmpT").textContent=`Si bajo la plantilla a ${f0(P.wfix)} operarios`;
+ const best=ok.find(x=>x.r.Z==mn);
+ document.getElementById("cmpS").textContent=best&&ref?`La mejor cobertura es “${best.n.replace("Constante: ","")}”: cuesta ${$(best.r.Z-ref.Z)} más que el óptimo libre (${$(ref.Z)}). Tocá una fila para ver todo el tablero con esa alternativa.`:"Con esa plantilla ninguna alternativa es factible.";
+ let h="<tr><th>Alternativa</th><th>Costo total incremental</th><th>Despidos</th><th>Horas extra</th><th>Subcontr.</th><th>Stock máx.</th></tr>";
+ res.forEach(x=>{const r=x.r;h+=r?`<tr onclick="aplicar(${x.o.modo},${x.o.cob})" style="cursor:pointer;${r.Z==mn&&x!=res[0]?"background:var(--acs);font-weight:600":""}"><td>${x.n}</td><td>${$(r.Z)}</td><td>${$(r.tot["Despidos"])}</td><td>${f0(r.HE)} h</td><td>${f0(r.rows.reduce((a,q)=>a+q.ps,0))} u.</td><td>${f0(Math.max(...r.rows.map(q=>q.inv)))}</td></tr>`:`<tr onclick="aplicar(${x.o.modo},${x.o.cob})" style="cursor:pointer"><td>${x.n}</td><td colspan="6" style="text-align:left" class="mut">No factible: la capacidad no alcanza con esa cobertura</td></tr>`});
+ document.getElementById("cmp").innerHTML=h}
+function buildSim(){let h="";
+ SPEC.forEach(g=>{h+=`<div><div class="font-semibold mb-2">${g[0]}</div>`+g[1].map(([k,l,mn,mx,st])=>`<div class="mb-3"><div class="flex justify-between items-center gap-2 text-sm"><label>${l}</label><input type="number" data-k="${k}" min="${mn}" max="${mx}" step="${st}"></div><input type="range" data-k="${k}" min="${mn}" max="${mx}" step="${st}"></div>`).join("")+"</div>"});
+ h+=`<div><div class="font-semibold mb-2">Escenarios</div><div class="mb-3 text-sm flex justify-between items-center"><label>Stock final en diciembre</label><select data-k="ssFin"><option value="-1">Igual al stock de seguridad</option><option value="0">0 (nulo)</option></select></div>
+ <div class="mb-3 text-sm flex justify-between items-center gap-2"><label>Plantilla</label><select data-k="modo"><option value="0">Óptima (libre)</option><option value="1">Constante: pruebo con menos operarios</option></select></div>
+ <div class="mb-3"><div class="flex justify-between items-center gap-2 text-sm"><label>Plantilla constante desde enero (prueba)</label><input type="number" data-k="wfix" min="100" max="180" step="1"></div><input type="range" data-k="wfix" min="100" max="180" step="1"></div>
+ <div class="mb-3 text-sm flex justify-between items-center gap-2"><label>Cómo cubro el faltante</label><select data-k="cob"><option value="0">Óptimo (HE + subcontratación)</option><option value="1">Solo horas extra</option><option value="2">Solo subcontratación</option></select></div>
+ <div class="text-sm flex justify-between items-center gap-2"><label>Demanda a cubrir en enero</label><select data-k="demEne"><option value="6900">6.900 (comprometidos 6.300 + pendientes 600)</option><option value="6855">6.855 (pronóstico + pendientes)</option><option value="6255">6.255 (solo pronóstico)</option></select></div></div>`;
+ document.getElementById("sim").innerHTML=h;sync()}
+function sync(){document.querySelectorAll("[data-k]").forEach(e=>e.value=P[e.dataset.k])}
+document.addEventListener("input",e=>{const k=e.target.dataset&&e.target.dataset.k;if(!k)return;const v=parseFloat(e.target.value);if(isNaN(v))return;P[k]=v;
+ document.querySelectorAll(`[data-k="${k}"]`).forEach(x=>{if(x!==e.target)x.value=v});if(k=="wfix"||(k=="cob"&&v>0))P.modo=1;sync();sched()});
+document.getElementById("rst").onclick=()=>{P={...DEF};sync();run()};
+document.getElementById("csv").onclick=csv;
+document.querySelectorAll(".tab").forEach(b=>b.onclick=()=>{document.querySelectorAll(".tab").forEach(x=>x.classList.toggle("on",x==b));
+ document.querySelectorAll(".pane").forEach((p,i)=>p.classList.toggle("on",i==b.dataset.t));Object.values(charts).forEach(c=>c.resize())});
+
+const SUP=[["Horizonte y demanda","12 meses (enero–diciembre). Demanda diaria uniforme dentro de cada mes; en enero se cubren los pedidos comprometidos (6.300) más los pendientes (600).","Agregación de una familia de productos en unidad equivalente (2,3 h estándar)."],
+["Costo incremental","Se excluyen los materiales (100/u.). El stock de seguridad no tiene costo de posesión: solo se cobra posesión por el stock que lo supere.","Solo los costos relevantes para decidir entre alternativas."],
+["Mano de obra","Plantilla W(t) = W(t−1) + contrataciones − despidos. Se paga toda la jornada disponible: horas usadas a tarifa estándar y las ociosas a tarifa ociosa.","Variable de decisión entera; modelo de Holt–Modigliani–Muth–Simon ampliado."],
+["Límites de plantilla","Piso de 100 permanentes (no se despiden) y techo de 3 turnos × 60 operarios = 180.","Política de la empresa y capacidad instalada."],
+["Horas extra","Hasta 10 % de las horas de jornada normal por operario (convenio colectivo), a tarifa extra.","Capacidad flexible de corto plazo."],
+["Subcontratación","Sin tope; se paga el costo incremental sobre el normal (7/u.) más la mano de obra estándar equivalente, que no se paga a la planta.","Garantiza factibilidad del modelo."],
+["Inventario y retraso","Stock inicial nulo, stock de seguridad de 250 u. exigido todos los meses. Los pedidos no atendidos se difieren y cuestan 25/u.·mes (backlog).","Balance I(t) − B(t) = I(t−1) − B(t−1) + P(t) − D(t)."],
+["Cierre del horizonte","En diciembre queda solo el stock de seguridad (250 u.) y sin pedidos atrasados. Opción alternativa: stock final nulo.","Consigna e); evita vaciar inventario a costa del año siguiente."],
+["Dotación inicial","180 operarios a fin de diciembre previo: 100 permanentes y 80 eventuales. Despedir eventuales cuesta 8.000, contratar 5.000.","Dato de la guía."],
+["Método de resolución","Programación lineal entera mixta: minimiza el costo total sujeto a balances, capacidad y límites. Solo la plantilla es entera; el óptimo se obtiene por simplex con ramificación y acotamiento (branch &amp; bound), validado con el script PuLP del grupo.","Óptimo global, a diferencia de las alternativas heurísticas (caza, nivelación) de los incisos a) a f)."]];
+document.getElementById("sup").innerHTML="<tr><th>Tema</th><th style='text-align:left'>Supuesto</th><th style='text-align:left'>Fundamento</th></tr>"+SUP.map(r=>`<tr><td style="white-space:nowrap;font-weight:600">${r[0]}</td><td style="text-align:left">${r[1]}</td><td style="text-align:left" class="mut">${r[2]}</td></tr>`).join("");
+Chart.defaults.color=getComputedStyle(document.documentElement).getPropertyValue("--mut").trim()||"#667085";
+buildSim();run();
+</script></body></html>
